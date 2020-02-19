@@ -34,6 +34,7 @@ def gedi_to_vector(file,variables=None,outFormat='CSV',filterBounds=None):
                     d[var] = np.array(data[k][var])
                 else:
                     raise ValueError(f"The variable {var} is not in the geolocation or BEAM group of the file {file}.")
+            d["BEAM"] = [k] * len(d[var])
             # convert dict of varaibles to dataframe
             tdf = pd.DataFrame(d)
             # concat to larger dataframe

@@ -1,0 +1,1 @@
+python gedi_to_vector.py --path data/GEDI_L2B_raw --variables '[fhd_normal,l2a_quality_flag,l2b_quality_flag,sensitivity,surface_flag,rx_sample_count,pai,longitude_bin0,latitude_bin0,delta_time]' --verbose --outFormat SHP --filterBounds '[-110.9508,30.9688,-109.2614,33.02797]'
