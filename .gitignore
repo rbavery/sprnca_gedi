@@ -1,0 +1,4 @@
+data/GEDI_L2B_raw/*.h5
+data/processed
+data/results
+.ipynb_checkpoints

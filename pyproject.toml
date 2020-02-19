@@ -1,0 +1,11 @@
+[build-system]
+requires = ["flit_core >=2,<3"]
+build-backend = "flit_core.buildapi"
+
+[tool.flit.metadata]
+module = "pygedi"
+author = "Ryan Avery"
+author-email = "ravery@ucsb.edu"
+home-page = "https://github.com/rbavery/sprnca_gedi"
+classifiers = ["License :: OSI Approved :: MIT License"]
+
