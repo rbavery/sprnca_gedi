@@ -17,13 +17,22 @@ def gedi_to_vector(file,variables=None,outFormat='CSV',filterBounds=None):
 
     # create empty dataframe to append data to
     df = pd.DataFrame()
+    
+    # canopy height variables with a height dimension as well as time, lat, and lon
+    height_dim_vars = ["cover_z", "pai_z", "paivd_z"]
 
     # loop over all of the hdf5 groups
     for k in list(data.keys()):
         # if BEAM in the group name
         if 'BEAM' in k:
+            
             # get the geolocation subgroup
             geo = data[k]['geolocation']
+            # landcover subgroup
+            land_cover = data[k]['land_cover']
+            # dz from ancillary subgroup for vars with height dim
+            dz = data[k]['ancillary']['dz']
+            
             d = {}
             # loop through all of the variables defined earlier
             for var in variables:
@@ -31,7 +40,14 @@ def gedi_to_vector(file,variables=None,outFormat='CSV',filterBounds=None):
                 if var in list(data[k]["geolocation"].keys()):
                     d[var] = np.array(geo[var])
                 elif var in list(data[k].keys()):
-                    d[var] = np.array(data[k][var])
+                    if var not in height_dim_vars:
+                        d[var] = np.array(data[k][var])
+                    else:
+                        height_profile = np.array(data[k][var])
+                        for z in height_profile:
+                            d[var] = z
+                elif var in list(data[k]["land_cover_data"].keys()):
+                    d[var] = np.array(land_cover[var])
                 else:
                     raise ValueError(f"The variable {var} is not in the geolocation or BEAM group of the file {file}.")
             d["BEAM"] = [k] * len(d[var])
