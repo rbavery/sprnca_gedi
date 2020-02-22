@@ -8,32 +8,58 @@ import pandas as pd
 import geopandas as gpd
 # requires fire, h5py, tqdm, numpy, pandas, and geopandas
 
-def gedi_to_vector(file,variables=None,outFormat='CSV',filterBounds=None):
+def gedi_to_vector(file,variables=None,outFormat='SHP',filterBounds=None, outDir="."):
+    """Takes a GEDI L2B product file and outputs a shapefile with either whole canopy metrics or canopy profile metrics.
+    
+    This function/CLI is largely based on Kel Markert's gist: https://gist.github.com/KMarkert/c68ccf53260d7b775b836bf2e11e2ec3
+    It has been adapted to output height profile variables and variable sbesides those in the geotransform .h5 group. Outputing 
+    a canopy height variable will multiply the number of rows in the dataframe by 30. 
+    
+    Args:
+        file:
+            String path to file.
+        variables:
+            Comma seperated list of variables. See the Data dictionary for a list of variables 
+            https://lpdaac.usgs.gov/documents/587/gedi_l2b_dictionary_P001_v1.html
+        outFormat:
+            The output format. Tested with "SHP" for shapefile but may also work with the following:
+            'CSV','SHP','GeoJSON','GPKG','csv','shp','geojson','gpkg'
+        filterBounds:
+            List of coords like [W,S,E,N].
+        outDir:
+            Absolute or relative path to the output directory.
+            
+    Usage Example: 
+    
+    python pygedi/gedi_to_vector.py --path data/GEDI_L2B_raw --variables '[pai,pai_z,cover,cover_z,pavd_z,fhd_normal,digital_elevation_model,landsat_treecover,modis_treecover,modis_treecover_sd,l2a_quality_flag,l2b_quality_flag,sensitivity,surface_flag,rx_sample_count,longitude_bin0,latitude_bin0,delta_time]' --verbose --outFormat SHP --filterBounds '[-110.9508,30.9688,-109.2614,33.02797]'
+    """
     # open hdf5 file
     data = h5py.File(file,'r')
 
     # get full file name and extension
-    name,_ = os.path.splitext(file)
+    name,_ = os.path.splitext(os.path.basename(file))
 
     # create empty dataframe to append data to
     df = pd.DataFrame()
-    
+
     # canopy height variables with a height dimension as well as time, lat, and lon
-    height_dim_vars = ["cover_z", "pai_z", "paivd_z"]
+    height_dim_vars = ["cover_z", "pai_z", "pavd_z"]
 
     # loop over all of the hdf5 groups
     for k in list(data.keys()):
         # if BEAM in the group name
         if 'BEAM' in k:
-            
+
             # get the geolocation subgroup
             geo = data[k]['geolocation']
             # landcover subgroup
-            land_cover = data[k]['land_cover']
+            land_cover = data[k]['land_cover_data']
+            sample_length = len(np.array(land_cover['landsat_treecover']))
             # dz from ancillary subgroup for vars with height dim
             dz = data[k]['ancillary']['dz']
-            
+
             d = {}
+            height_profile_d = {}
             # loop through all of the variables defined earlier
             for var in variables:
                 # assign variable array to dict key
@@ -43,16 +69,31 @@ def gedi_to_vector(file,variables=None,outFormat='CSV',filterBounds=None):
                     if var not in height_dim_vars:
                         d[var] = np.array(data[k][var])
                     else:
-                        height_profile = np.array(data[k][var])
-                        for z in height_profile:
-                            d[var] = z
-                elif var in list(data[k]["land_cover_data"].keys()):
+                        # original values are ordered from max z to 0, so we flip to align with height_range
+                        height_profile_var = np.flip(np.array(data[k][var]), axis=1) 
+                        height_profile_d[var] = height_profile_var.flatten()
+                        if "height_z" not in list(height_profile_d.keys()): #only add if it is not already there
+                            # this assumes all height profiles have the same height length as each other 
+                            # and the number of samples is equal for all variables averaged over whole height range
+                            # makes a very tall dataframe with repeated averaged canopy metrics
+                            num_height_steps = height_profile_var.shape[1]
+                            height_range = np.arange(0,num_height_steps)*np.array(dz)
+                            repeated_heights = np.tile(height_range,sample_length)
+                            height_profile_d["height_z"] = repeated_heights
+                            index_range = np.arange(0,sample_length)
+                            height_profile_d["sample_index"] = np.repeat(index_range,num_height_steps)
+                elif var in list(land_cover.keys()):
                     d[var] = np.array(land_cover[var])
                 else:
                     raise ValueError(f"The variable {var} is not in the geolocation or BEAM group of the file {file}.")
             d["BEAM"] = [k] * len(d[var])
             # convert dict of varaibles to dataframe
             tdf = pd.DataFrame(d)
+            # only add height and sample index columns if there are height profile vars that have been processed
+            if len(set(height_dim_vars).intersection(list(height_profile_d.keys()))) > 1:
+                tdf = tdf.reset_index().rename({"index":"sample_index"}, axis=1)
+                height_profile_tdf = pd.DataFrame(height_profile_d)
+                tdf = pd.merge(height_profile_tdf, tdf, on="sample_index")
             # concat to larger dataframe
             df = pd.concat([df,tdf],axis=0,sort=False)
 
@@ -87,11 +128,11 @@ def gedi_to_vector(file,variables=None,outFormat='CSV',filterBounds=None):
         gdf = gpd.GeoDataFrame(
             df, geometry=gpd.points_from_xy(df.longitude_bin0, df.latitude_bin0))
         # save the geodataframe of variables to file
-        gdf.to_file('{}.{}'.format(name,outFormat.lower()))
+        gdf.to_file('{}/{}.{}'.format(outDir,name,outFormat.lower()))
 
     return
 
-def main(path,variables=None,verbose=False,outFormat='CSV',filterBounds=None):
+def main(path,variables=None,verbose=False,outFormat='CSV',filterBounds=None, outDir="."):
     # check if the variables to extract have been defined
     if variables is None:
         raise ValueError("Please provide variables from the GEDI file to convert")
@@ -103,6 +144,9 @@ def main(path,variables=None,verbose=False,outFormat='CSV',filterBounds=None):
     # check if filterBounds have been provided and in correct datatype
     if (filterBounds is not None) and (type(filterBounds) is not list):
         raise TypeError("Provided filterBounds is not list, please provide argument as '[W,S,E,N]'")
+        
+    if (type(outDir) is not str):
+        raise TypeError(f"Provided outDir type {type(outDir)} is not str, please provide argument as '<outDir>'. This can be an absolute path or a relative path.")
 
     # check if the output format provided is supported by script
     availableFormats = ['CSV','SHP','GeoJSON','GPKG','csv','shp','geojson','gpkg']
@@ -126,7 +170,7 @@ def main(path,variables=None,verbose=False,outFormat='CSV',filterBounds=None):
             _, desc = os.path.split(f)
             t.set_description(desc="Processing {}".format(desc))
 
-        gedi_to_vector(f,variables,outFormat,filterBounds)
+        gedi_to_vector(f,variables,outFormat,filterBounds,outDir)
 
         if verbose:
             t.update(i+1)
